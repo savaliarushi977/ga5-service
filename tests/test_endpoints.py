@@ -3,6 +3,8 @@ Run with: python3 tests/test_endpoints.py
 """
 import httpx
 
+from skill_fixtures import FIXTURES
+
 BASE = "http://localhost:8099"
 failures = []
 
@@ -108,6 +110,15 @@ check(
     {"decision": "continue"},
     "Q5 legit polling with changing run_id",
 )
+
+# --- Q4 skill scanner ---
+for name, content, expected in FIXTURES:
+    r = httpx.post(f"{BASE}/q4/scan", json={"skill": content}, timeout=30)
+    got = sorted(r.json()["categories"])
+    ok = got == sorted(expected)
+    if not ok:
+        failures.append(f"q4:{name}")
+    print(f"[{'OK' if ok else 'FAIL'}] Q4 {name}: got={got} expected={sorted(expected)}")
 
 print()
 if failures:

@@ -1,10 +1,11 @@
 from fastapi import FastAPI
 
-from . import q2_proration, q5_runguard
+from . import q2_proration, q4_scanner, q5_runguard
 
 app = FastAPI()
 
 app.include_router(q2_proration.router)
+app.include_router(q4_scanner.router)
 app.include_router(q5_runguard.router)
 
 
