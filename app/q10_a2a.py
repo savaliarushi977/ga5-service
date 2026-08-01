@@ -67,9 +67,17 @@ def agent_card():
 
 # ---- Auth / version helpers ----
 
-def require_auth(authorization: str | None, a2a_version: str | None, content_type: str | None) -> str:
-    if a2a_version is not None and a2a_version != "1.0":
-        raise HTTPException(status_code=400, detail="unsupported A2A-Version")
+def require_auth(
+    authorization: str | None,
+    a2a_version: str | None,
+    content_type: str | None,
+    require_content_type: bool = False,
+) -> str:
+    if a2a_version != "1.0":
+        raise HTTPException(status_code=400, detail="missing or unsupported A2A-Version")
+    if require_content_type:
+        if not content_type or content_type.split(";")[0].strip().lower() != "application/a2a+json":
+            raise HTTPException(status_code=400, detail="Content-Type must be application/a2a+json")
     if not authorization or not authorization.startswith("Bearer ") or len(authorization) <= len("Bearer "):
         raise HTTPException(status_code=401, detail="missing bearer token")
     return authorization[len("Bearer "):].strip()
@@ -204,7 +212,7 @@ async def message_send(
     a2a_version: str | None = Header(default=None, alias="A2A-Version"),
     content_type: str | None = Header(default=None),
 ):
-    principal = require_auth(authorization, a2a_version, content_type)
+    principal = require_auth(authorization, a2a_version, content_type, require_content_type=True)
     body = await request.json()
     message = body.get("message")
     if not message or not isinstance(message, dict):
@@ -370,8 +378,12 @@ async def message_send(
 
 
 @router.get("/a2a/tasks/{task_id}")
-def get_task(task_id: str, authorization: str | None = Header(default=None)):
-    principal = require_auth(authorization, None, None)
+def get_task(
+    task_id: str,
+    authorization: str | None = Header(default=None),
+    a2a_version: str | None = Header(default=None, alias="A2A-Version"),
+):
+    principal = require_auth(authorization, a2a_version, None)
     snap = db().collection("q10_tasks").document(task_id).get()
     if not snap.exists or snap.to_dict()["principal"] != principal:
         raise HTTPException(status_code=404, detail="not found")
@@ -379,15 +391,22 @@ def get_task(task_id: str, authorization: str | None = Header(default=None)):
 
 
 @router.get("/a2a/tasks")
-def list_tasks(authorization: str | None = Header(default=None)):
-    principal = require_auth(authorization, None, None)
+def list_tasks(
+    authorization: str | None = Header(default=None),
+    a2a_version: str | None = Header(default=None, alias="A2A-Version"),
+):
+    principal = require_auth(authorization, a2a_version, None)
     docs = db().collection("q10_tasks").where("principal", "==", principal).stream()
     return {"tasks": [d.to_dict()["task"] for d in docs]}
 
 
 @router.post("/a2a/tasks/{task_id}:cancel")
-def cancel_task(task_id: str, authorization: str | None = Header(default=None)):
-    principal = require_auth(authorization, None, None)
+def cancel_task(
+    task_id: str,
+    authorization: str | None = Header(default=None),
+    a2a_version: str | None = Header(default=None, alias="A2A-Version"),
+):
+    principal = require_auth(authorization, a2a_version, None)
     ref = db().collection("q10_tasks").document(task_id)
     snap = ref.get()
     if not snap.exists or snap.to_dict()["principal"] != principal:

@@ -10,6 +10,7 @@ import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import APIRouter, Response
+from google.api_core.exceptions import AlreadyExists
 from google.cloud import firestore
 
 router = APIRouter()
@@ -17,6 +18,10 @@ router = APIRouter()
 PROFILE = "ga5-mailroom-action-gate/v2"
 AIPIPE_TOKEN = os.environ.get("AIPIPE_TOKEN", "")
 MAILROOM_MODEL = os.environ.get("Q9_MODEL", "gpt-5-mini")
+# Bump this on every change to decision logic / schema so a stale cached
+# decision from an older, possibly-broken code path can never mask a fix -
+# it changes the cache document ID, so old entries are simply orphaned.
+DECISION_VERSION = "v4"
 CHUNK_SIZE = 6
 CHUNK_TIMEOUT_SECONDS = 35
 MAX_WORKERS = 12
@@ -355,17 +360,26 @@ def propose(payload: dict) -> tuple[int, dict]:
     input_digest = compute_input_digest(dossiers)
 
     eval_ref = db().collection("q9_evaluations").document(evaluation_id)
-    eval_snap = eval_ref.get()
-    if eval_snap.exists:
-        existing = eval_snap.to_dict()
-        if existing["inputDigest"] != input_digest:
-            return 409, {"error": "evaluationId reused with changed content"}
-        return 200, existing["proposeResponse"]
+    try:
+        # .create() is atomic: it fails if the doc already exists, so two
+        # concurrent propose() calls for the same evaluationId can never both
+        # observe "not exists" and both proceed independently (the race that
+        # let a conflicting-content call slip through with 200 instead of 409).
+        eval_ref.create({"inputDigest": input_digest, "status": "in_progress", "createdAt": time.time()})
+    except AlreadyExists:
+        for _ in range(40):
+            existing = eval_ref.get().to_dict()
+            if existing["inputDigest"] != input_digest:
+                return 409, {"error": "evaluationId reused with changed content"}
+            if existing.get("status") == "done":
+                return 200, existing["proposeResponse"]
+            time.sleep(1)  # another concurrent request for the same content is still computing
+        return 409, {"error": "timed out waiting for concurrent propose to finish"}
 
     # Determine which dossiers need a fresh LLM decision (not already cached by content).
     content_hashes = {d["dossierId"]: dossier_content_hash(d) for d in dossiers}
     cache_refs = {
-        did: db().collection("q9_dossier_decisions").document(f"{did}:{content_hashes[did]}")
+        did: db().collection("q9_dossier_decisions").document(f"{did}:{content_hashes[did]}:{DECISION_VERSION}")
         for did in content_hashes
     }
     cached = {did: ref.get() for did, ref in cache_refs.items()}
@@ -409,13 +423,12 @@ def propose(payload: dict) -> tuple[int, dict]:
         "proposals": proposals,
     }
 
-    eval_ref.set({
-        "inputDigest": input_digest,
+    eval_ref.update({
+        "status": "done",
         "receiptVerifier": receipt_verifier,
         "proposeResponse": response_body,
         "proposalsByCallId": {p["callId"]: p for p in proposals},
         "committed": False,
-        "createdAt": time.time(),
     })
 
     return 200, response_body
@@ -434,6 +447,8 @@ def commit(payload: dict) -> tuple[int, dict]:
     if not eval_snap.exists:
         return 409, {"error": "unknown evaluationId"}
     ev = eval_snap.to_dict()
+    if ev.get("status") != "done":
+        return 409, {"error": "propose has not completed for this evaluationId yet"}
 
     if ev.get("committed"):
         return 200, ev["commitResponse"]
