@@ -205,6 +205,7 @@ def call_llm_chunk(dossiers: list[dict]) -> dict[str, dict]:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": build_user_content(dossiers)},
         ],
+        "reasoning_effort": "low",
         "tools": DECISION_TOOL_SCHEMA,
         "tool_choice": {"type": "function", "function": {"name": "submit_decisions"}},
     }

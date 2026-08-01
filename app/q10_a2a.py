@@ -144,12 +144,13 @@ def call_llm_for_invoice_decisions(packages: list[dict]) -> dict[str, dict]:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_content},
         ],
+        "reasoning_effort": "low",
         "tools": DECISION_TOOL_SCHEMA,
         "tool_choice": {"type": "function", "function": {"name": "submit_invoice_decisions"}},
     }
     resp = httpx.post(
         "https://aipipe.org/openai/v1/chat/completions",
-        json=body, timeout=50,
+        json=body, timeout=30,
         headers={"Authorization": f"Bearer {AIPIPE_TOKEN}", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
     )
     resp.raise_for_status()

@@ -22,45 +22,41 @@ with YAML frontmatter plus instructions for an AI agent). Classify the given fil
 against exactly these four categories - a file may match 0, 1, 2, or 3 of them. Each
 category below states its EXACT bar; do not extend it by analogy or vibes.
 
-hardcoded_secret: a literal, credential-shaped value (API key, access token, password,
-or a webhook URL that itself embeds a secret token) written directly in the skill's
-frontmatter or example script, instead of being referenced via an environment variable
-or a secret store. A plain public URL that is not itself a credential (a homepage link,
-a docs link, a non-authenticated API endpoint) is NOT a hardcoded secret - only flag it
-if the value shown is genuinely secret-shaped (long random-looking token, "key=", "sk-",
-"token=", a webhook path containing an embedded auth token, etc).
+hardcoded_secret: a literal secret, API key, or webhook URL embedded directly in the
+skill's frontmatter or example script, instead of being referenced via an environment
+variable or a secret store. This includes any concrete credential value written in
+plaintext - an API key, access token, password, or a webhook/connection URL with an
+embedded auth token - regardless of exactly what character pattern it uses. A plain
+non-authenticated public URL (a homepage link, a docs link) is NOT a hardcoded secret.
 
 prompt_injection: one of the skill's own IMPERATIVE steps - something it tells the agent
 to actually DO - tries to override user or agent control: e.g. instructing silent
 exfiltration of file contents, or telling the agent to ignore the user's stop/cancel
 request. A step that merely discusses, quotes, or gives an example of such phrasing (as
 documentation, a warning, or a description of what to detect) is NOT prompt injection.
-If you are not looking at a direct imperative instruction to the agent that does
-something clearly harmful, do not flag this.
 
-excessive_permissions: the skill's own DECLARED permissions/access section (e.g. a
-frontmatter "permissions" field, or an explicit statement of what filesystem/network
-access it needs) asks for broader access than its stated task plainly requires (e.g.
+excessive_permissions: the skill asks for (declares, or plainly states in its
+instructions) broader filesystem or network access than its stated task requires - e.g.
 read/write to the entire filesystem, or egress to any domain, for a narrowly scoped
-task). A permission that plainly matches the stated task's scope is NOT excessive, even
-if it sounds broad in isolation (e.g. "network: api.github.com" for a skill that calls
-GitHub is normal, not excessive). Judge this ONLY by an explicit declared-access
-statement - never infer it from prose describing what the skill's steps do. A skill
-with no explicit permissions section at all is NOT excessive by default.
+task. This can appear either as an explicit frontmatter "permissions" field OR as a
+plain-language statement of what access it uses - judge by the actual scope requested
+either way. A permission/access statement that plainly matches the stated task's scope
+is NOT excessive (e.g. "network: api.github.com" for a skill that calls GitHub is
+normal).
 
-unclear_provenance: ALL THREE of author, version, and changelog are absent - having even
-one of the three present means this does NOT apply - OR a step silently rewrites its own
-version metadata without surfacing that change to the reviewer. A skill with a normal
-author/version/changelog is NOT flagged for this even if terse or minimal.
+unclear_provenance: the skill has no author, no version, and no changelog - and/or a
+step silently rewrites its own version metadata without surfacing that change to the
+reviewer. A skill with a normal author/version/changelog is NOT flagged for this even
+if terse.
 
 Roughly 40% of the files you will see are genuinely clean and must get an empty
-categories list - do not assume most files are risky. Over-claiming a category that
-isn't clearly present is scored substantially worse than missing one that is: before
-including any category, ask yourself "does the text give unambiguous, specific evidence
-that exactly matches this category's stated bar, with no inference required?" If the
-honest answer involves any hedging, leave that category out. Do not flag boilerplate,
-examples, security-review skills that describe attack patterns as documentation, or
-ordinary/scoped permissions as if they were violations.
+categories list - do not assume most files are risky, but do not require a formal
+frontmatter field either: read the actual instructions for what the skill really does
+and requests. Over-claiming a category with no real textual basis is scored worse than
+missing one that is present, so do not invent violations - but when the file plainly
+states something that matches a category's description, flag it even if phrased as
+prose rather than a formal declaration. Do not flag boilerplate, examples, or
+security-review skills that describe attack patterns as documentation.
 
 Call report_categories exactly once with your final answer."""
 
@@ -98,6 +94,15 @@ class ScanResponse(BaseModel):
 
 @router.post("/q4/scan", response_model=ScanResponse)
 def scan(req: ScanRequest):
+    try:
+        return _scan_impl(req)
+    except Exception:
+        # A crash/timeout must never surface as a raw 500 - fail to an empty
+        # (no false positives) result rather than an unreachable endpoint.
+        return ScanResponse(categories=[])
+
+
+def _scan_impl(req: ScanRequest):
     body = {
         "model": SCANNER_MODEL,
         "messages": [
@@ -106,11 +111,12 @@ def scan(req: ScanRequest):
         ],
         "tools": TOOL_SCHEMA,
         "tool_choice": {"type": "function", "function": {"name": "report_categories"}},
+        "reasoning_effort": "low",
     }
     resp = httpx.post(
         "https://aipipe.org/openai/v1/chat/completions",
         json=body,
-        timeout=25,
+        timeout=15,
         headers={
             "Authorization": f"Bearer {AIPIPE_TOKEN}",
             "Content-Type": "application/json",

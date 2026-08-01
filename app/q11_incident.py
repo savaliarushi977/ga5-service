@@ -122,12 +122,13 @@ Call submit_diagnosis_and_plan exactly once."""
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": incident.get("transcript", "")},
         ],
+        "reasoning_effort": "minimal",
         "tools": DIAGNOSIS_TOOL_SCHEMA,
         "tool_choice": {"type": "function", "function": {"name": "submit_diagnosis_and_plan"}},
     }
     resp = httpx.post(
         "https://aipipe.org/openai/v1/chat/completions",
-        json=body, timeout=15,
+        json=body, timeout=12,
         headers={"Authorization": f"Bearer {AIPIPE_TOKEN}", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
     )
     resp.raise_for_status()

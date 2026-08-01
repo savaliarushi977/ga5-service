@@ -2,7 +2,7 @@ import ipaddress
 import posixpath
 import socket
 from typing import Any, Literal
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin
 
 import httpx
 from fastapi import APIRouter
@@ -39,27 +39,29 @@ def is_ip_allowed(ip_str: str) -> bool:
 
 
 def extract_safe_host(url: str) -> str | None:
-    """Strictly parse a URL for the fetch guard: reject non-http(s) schemes,
-    any embedded userinfo (username/password), and any non-default port -
-    all classes of URL-parsing confusion that a bare hostname exact-match
-    check alone wouldn't catch."""
+    """Parse a URL using httpx's OWN parser - the same one that will actually
+    perform the request - rather than the stdlib's urlsplit. Using a different
+    parser to validate than the one that executes the fetch is a classic
+    bypass class: two parsers can disagree on a malformed/edge-case URL (e.g.
+    stdlib urlsplit silently strips control characters like tabs from a
+    hostname where httpx's parser does not), letting something validate as
+    the allowed host while the actual connection goes elsewhere - or crashes
+    unhandled, which is just as bad as an allow if it skips the block path.
+    Also rejects non-http(s) schemes, embedded userinfo, and non-default
+    ports. Any parsing failure fails CLOSED (returns None -> blocked)."""
     try:
-        parts = urlsplit(url)
-    except ValueError:
+        parsed = httpx.URL(url)
+    except Exception:
         return None
-    if parts.scheme.lower() not in ALLOWED_SCHEMES:
+    if parsed.scheme.lower() not in ALLOWED_SCHEMES:
         return None
-    if parts.username is not None or parts.password is not None:
+    if parsed.username or parsed.password:
         return None
-    hostname = parts.hostname
+    hostname = parsed.host
     if not hostname:
         return None
-    try:
-        port = parts.port
-    except ValueError:
-        return None
-    default_port = 443 if parts.scheme.lower() == "https" else 80
-    if port is not None and port != default_port:
+    default_port = 443 if parsed.scheme.lower() == "https" else 80
+    if parsed.port is not None and parsed.port != default_port:
         return None
     try:
         hostname.encode("idna")
@@ -83,18 +85,21 @@ def is_host_allowed(hostname: str | None) -> bool:
 
 def guarded_fetch(url: str) -> httpx.Response | None:
     current = url
-    for _ in range(MAX_REDIRECT_HOPS):
-        host = extract_safe_host(current)
-        if not is_host_allowed(host):
-            return None
-        resp = httpx.get(current, follow_redirects=False, timeout=10)
-        if resp.is_redirect:
-            location = resp.headers.get("location")
-            if not location:
-                return resp
-            current = urljoin(current, location)
-            continue
-        return resp
+    try:
+        for _ in range(MAX_REDIRECT_HOPS):
+            host = extract_safe_host(current)
+            if not is_host_allowed(host):
+                return None
+            resp = httpx.get(current, follow_redirects=False, timeout=10)
+            if resp.is_redirect:
+                location = resp.headers.get("location")
+                if not location:
+                    return resp
+                current = urljoin(current, location)
+                continue
+            return resp
+    except Exception:
+        return None  # any fetch/parsing error fails closed, never a raw 500
     return None
 
 
@@ -106,6 +111,15 @@ class Decision(BaseModel):
 
 @router.post("/q8/check", response_model=Decision)
 def check(payload: dict):
+    try:
+        return _check_impl(payload)
+    except Exception:
+        # Any unexpected internal error must never surface as a raw 500 - a
+        # crash here is just as bad as an allow if it skips the block path.
+        return Decision(action="block", reason="Internal error while evaluating this request.")
+
+
+def _check_impl(payload: dict):
     tool = payload.get("tool")
     args = payload.get("arguments", {})
 

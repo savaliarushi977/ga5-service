@@ -58,6 +58,12 @@ check({"tool": "fetch_url", "arguments": {"url": "https://example.com:443/"}}, "
 check({"tool": "fetch_url", "arguments": {"url": "evil.com"}}, "block", "missing scheme entirely")
 check({"tool": "fetch_url", "arguments": {"url": "https:evil.com"}}, "block", "malformed scheme separator")
 
+# parser-discrepancy: stdlib urlsplit silently strips control chars where httpx doesn't -
+# must never crash to a raw 500 (which reads as "not blocked"), must fail closed
+check({"tool": "fetch_url", "arguments": {"url": "https://exa\tmple.com/"}}, "block", "embedded tab char in hostname (parser discrepancy)")
+check({"tool": "fetch_url", "arguments": {"url": "https://exa\nmple.com/"}}, "block", "embedded newline in hostname (parser discrepancy)")
+check({"tool": "read_file", "arguments": {"path": "/srv/agent-redteam/sandbox-dbba8b5d6b/notes/\x00report.txt"}}, "block", "NUL byte in read path must not crash")
+
 print()
 if failures:
     print(f"{len(failures)} FAILURE(S):", failures)
