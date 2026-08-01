@@ -71,7 +71,9 @@ send_req = {
 }
 r = httpx.post(f"{BASE}/a2a/message:send", json=send_req, headers=HEADERS_A, timeout=60)
 check(r.status_code == 200, "message:send (fresh batch) returns 200", f"got {r.status_code}: {r.text[:300]}")
-task1 = r.json()
+envelope1 = r.json()
+check("task" in envelope1, "message:send response is wrapped in {\"task\": ...}", f"got keys={list(envelope1.keys())}")
+task1 = envelope1["task"]
 check(task1.get("status", {}).get("state") == "TASK_STATE_INPUT_REQUIRED", "task state is INPUT_REQUIRED")
 proposals_artifact = next((a for a in task1.get("artifacts", []) if a["mediaType"] == "application/vnd.ga5.invoice-action-proposals+json"), None)
 check(proposals_artifact is not None, "exactly one proposals artifact present")
@@ -98,7 +100,7 @@ context_id = task1["contextId"]
 
 # --- replay same messageId, same content -> byte-equivalent ---
 r2 = httpx.post(f"{BASE}/a2a/message:send", json=send_req, headers=HEADERS_A, timeout=30)
-check(r2.status_code == 200 and r2.json() == task1, "replay of identical message:send is byte-equivalent")
+check(r2.status_code == 200 and r2.json() == envelope1, "replay of identical message:send is byte-equivalent")
 
 # --- results continuation ---
 results_msg_id = f"msg-{uuid.uuid4().hex}"
@@ -117,7 +119,8 @@ results_req = {
 }
 r3 = httpx.post(f"{BASE}/a2a/message:send", json=results_req, headers=HEADERS_A, timeout=30)
 check(r3.status_code == 200, "results continuation returns 200", f"got {r3.status_code}: {r3.text[:300]}")
-task_completed = r3.json()
+check("task" in r3.json(), "results continuation response also wrapped in {\"task\": ...}")
+task_completed = r3.json()["task"]
 check(task_completed.get("status", {}).get("state") == "TASK_STATE_COMPLETED", "task state is COMPLETED after results")
 receipts_artifact = next((a for a in task_completed.get("artifacts", []) if a["mediaType"] == "application/vnd.ga5.invoice-action-receipts+json"), None)
 check(receipts_artifact is not None, "receipts artifact present")

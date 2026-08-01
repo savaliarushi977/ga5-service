@@ -42,27 +42,48 @@ def sha256_hex(b: bytes) -> str:
 
 # ---- Agent Card ----
 
-@router.get("/.well-known/agent-card.json")
-def agent_card():
-    card = {
+_ORIGIN = BASE_URL[: -len("/a2a")] if BASE_URL.endswith("/a2a") else BASE_URL
+
+
+def build_card() -> dict:
+    return {
+        "protocolVersion": "1.0",
         "name": "GA5 Invoice Action Agent",
         "description": "Reads invoice claim batches and proposes one business action per package.",
         "version": "1.0.0",
-        "capabilities": {"streaming": False, "pushNotifications": False},
+        "preferredTransport": "HTTP+JSON",
+        "url": BASE_URL,
+        "provider": {"organization": "TDS GA5", "url": BASE_URL},
+        "capabilities": {"streaming": False, "pushNotifications": False, "stateTransitionHistory": True},
+        "supportedInterfaces": [
+            {"url": BASE_URL, "protocolBinding": "HTTP+JSON", "protocolVersion": "1.0"},
+            {"url": _ORIGIN, "protocolBinding": "HTTP+JSON", "protocolVersion": "1.0"},
+        ],
+        "defaultInputModes": [CLAIM_BATCH_MEDIA, RESULTS_MEDIA, "application/json"],
+        "defaultOutputModes": [PROPOSALS_MEDIA, RECEIPTS_MEDIA, "application/json"],
+        "securitySchemes": {
+            "bearerAuth": {"type": "http", "scheme": "bearer", "description": "Per-tenant Bearer token; each token is a distinct principal."}
+        },
+        "security": [{"bearerAuth": []}],
         "skills": [{
-            "name": "invoice_action_agent",
+            "id": "invoice_action_agent",
+            "name": "Invoice Action Agent",
             "description": "Reconciles invoice packages and proposes settle/approve/hold/reject/exception actions.",
             "tags": ["invoice", "reconciliation", "finance"],
+            "examples": [
+                "Propose one action for each package in an invoice claim batch.",
+                "Finalise the approved proposals using these tool receipts.",
+            ],
+            "inputModes": [CLAIM_BATCH_MEDIA, RESULTS_MEDIA],
+            "outputModes": [PROPOSALS_MEDIA, RECEIPTS_MEDIA],
         }],
-        "supportedInterfaces": [{
-            "url": BASE_URL,
-            "protocolBinding": "HTTP+JSON",
-            "protocolVersion": "1.0",
-        }],
-        "defaultInputModes": [CLAIM_BATCH_MEDIA],
-        "defaultOutputModes": [PROPOSALS_MEDIA, RECEIPTS_MEDIA],
     }
-    return Response(content=json.dumps(card), media_type="application/json")
+
+
+@router.get("/.well-known/agent-card.json")
+@router.get("/a2a/.well-known/agent-card.json")
+def agent_card():
+    return Response(content=json.dumps(build_card()), media_type="application/json")
 
 
 # ---- Auth / version helpers ----
@@ -238,7 +259,7 @@ async def message_send(
         if existing["contentHash"] != content_hash:
             raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
         task_ref = db().collection("q10_tasks").document(existing["taskId"])
-        return task_ref.get().to_dict()["task"]
+        return {"task": task_ref.get().to_dict()["task"]}
 
     parts = message.get("parts", [])
 
@@ -291,7 +312,7 @@ async def message_send(
 
         task_ref.set({**stored, "task": task, "status": "completed"})
         dedup_ref.set({"contentHash": content_hash, "taskId": task_id_in})
-        return task
+        return {"task": task}
 
     # Fresh batch submission.
     claim_part = next((p for p in parts if p.get("mediaType") == CLAIM_BATCH_MEDIA), None)
@@ -378,7 +399,7 @@ async def message_send(
     })
     dedup_ref.set({"contentHash": content_hash, "taskId": task_id})
 
-    return task
+    return {"task": task}
 
 
 @router.get("/a2a/tasks/{task_id}")
