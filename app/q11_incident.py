@@ -285,7 +285,7 @@ def _create_incident_impl(payload: dict):
     tool_catalog = payload.get("toolCatalog", [])
     policy = payload.get("policy", {})
     if not run_id or not incident:
-        raise HTTPException(status_code=400, detail="missing runId or incident")
+        raise HTTPException(status_code=422, detail="missing runId or incident")
 
     run_ref = db().collection("q11_runs").document(run_id)
     snap = run_ref.get()
@@ -360,6 +360,7 @@ def _create_incident_impl(payload: dict):
         "diagnosis": diagnosis,
         "dispatches": action_log,
         "approvals": [],
+        "otlp": build_incident_otlp(run_doc),
     }
     run_doc["lastResponse"] = response_body
     run_ref.set(run_doc)
@@ -467,6 +468,7 @@ def _post_receipts_impl(run_id: str, payload: dict):
                 "diagnosis": run["diagnosis"],
                 "dispatches": [],
                 "approvals": [{"approvalId": approval_id, "actionId": effect_action_id, "toolName": chosen_tool, "argumentsDigest": args_digest}],
+                "otlp": build_incident_otlp(run),
             }
         else:
             response_body = _dispatch_effect(run, chosen_tool)
@@ -501,7 +503,10 @@ def _post_receipts_impl(run_id: str, payload: dict):
                 "otlp": build_incident_otlp(run),
             }
         else:
-            response_body = {"runId": run_id, "status": "waiting", "diagnosis": run["diagnosis"], "dispatches": [], "approvals": []}
+            response_body = {
+                "runId": run_id, "status": "waiting", "diagnosis": run["diagnosis"],
+                "dispatches": [], "approvals": [], "otlp": build_incident_otlp(run),
+            }
 
     run["lastResponse"] = response_body
     run["lastReceiptId"] = receipt_id
@@ -524,7 +529,10 @@ def _dispatch_effect(run: dict, tool_name: str, approval: dict | None = None) ->
     run["actionLog"].append(dispatch)
     run["chosenEffect"] = tool_name
     run["pendingActionIds"] = list(set(run.get("pendingActionIds", [])) | {action_id})
-    return {"runId": run["runId"], "status": "waiting", "diagnosis": run["diagnosis"], "dispatches": [dispatch], "approvals": []}
+    return {
+        "runId": run["runId"], "status": "waiting", "diagnosis": run["diagnosis"],
+        "dispatches": [dispatch], "approvals": [], "otlp": build_incident_otlp(run),
+    }
 
 
 @router.get("/v2/incidents/{run_id}")
