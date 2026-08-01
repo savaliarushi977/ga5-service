@@ -35,11 +35,15 @@ check(
     "defaultOutputModes includes both proposal and receipt media types",
 )
 
-# --- Auth / version checks ---
-r = httpx.post(f"{BASE}/a2a/message:send", json={}, timeout=15)
-check(r.status_code == 401, "missing auth -> 401", f"got {r.status_code}")
+# --- Auth / version / media-type checks ---
+r = httpx.post(f"{BASE}/a2a/message:send", json={}, headers={"A2A-Version": "1.0", "Content-Type": "application/a2a+json"}, timeout=15)
+check(r.status_code == 401, "missing auth (version/content-type present) -> 401", f"got {r.status_code}")
 r = httpx.post(f"{BASE}/a2a/message:send", json={}, headers={**HEADERS_A, "A2A-Version": "2.0"}, timeout=15)
 check(r.status_code == 400, "wrong A2A-Version -> 400", f"got {r.status_code}")
+r = httpx.post(f"{BASE}/a2a/message:send", json={}, timeout=15)
+check(r.status_code == 400, "everything missing -> 400 (version checked first)", f"got {r.status_code}")
+r = httpx.post(f"{BASE}/a2a/message:send", json={}, headers={**HEADERS_A, "Content-Type": "application/json"}, timeout=15)
+check(r.status_code == 400, "wrong Content-Type -> 400", f"got {r.status_code}")
 
 # --- Fresh batch submission ---
 PACKAGES = [
