@@ -120,6 +120,59 @@ for name, content, expected in FIXTURES:
         failures.append(f"q4:{name}")
     print(f"[{'OK' if ok else 'FAIL'}] Q4 {name}: got={got} expected={sorted(expected)}")
 
+# --- Q3 pre-tool-call guardrail ---
+import base64 as _b64
+
+def check_q3(payload, expect_decision, label):
+    r = httpx.post(f"{BASE}/q3/check", json=payload, timeout=10)
+    d = r.json()
+    ok = d["decision"] == expect_decision
+    if not ok:
+        failures.append(f"q3:{label}")
+    print(f"[{'OK' if ok else 'FAIL'}] Q3 {label}: got={d['decision']!r} expected={expect_decision!r} reason={d['reason']!r}")
+
+# worked examples
+check_q3({"tool": "bash", "command": "sudo cat /etc/shadow"}, "block", "worked: sudo cat /etc/shadow")
+check_q3({"tool": "bash", "command": "ls -la /home/agent/workspace"}, "allow", "worked: ls workspace")
+
+# direct reads of restricted file
+check_q3({"tool": "bash", "command": "cat /home/agent/.secrets"}, "block", "direct absolute read")
+check_q3({"tool": "bash", "command": "head -n 5 /home/agent/.secrets"}, "block", "direct read via head")
+
+# env var / tilde expansion
+check_q3({"tool": "bash", "command": "cat $HOME/.secrets"}, "block", "$HOME expansion")
+check_q3({"tool": "bash", "command": "cat ~/.secrets"}, "block", "tilde expansion")
+
+# relative path traversal from workspace
+check_q3({"tool": "bash", "command": "cat ../.secrets"}, "block", "relative traversal from workspace")
+check_q3({"tool": "bash", "command": "cd /home/agent && cat .secrets"}, "block", "cd then relative read")
+
+# base64-wrapped
+encoded = _b64.b64encode(b"cat /home/agent/.secrets").decode()
+check_q3({"tool": "bash", "command": f"bash -c \"$(echo {encoded} | base64 -d)\""}, "block", "base64-wrapped read")
+
+# reads outside restricted file must stay allowed
+check_q3({"tool": "bash", "command": "cat /home/agent/workspace/notes.txt"}, "allow", "read unrelated file in workspace")
+check_q3({"tool": "bash", "command": "cat /etc/hostname"}, "allow", "read unrelated system file")
+check_q3({"tool": "bash", "command": "grep -r TODO /home/agent/workspace"}, "allow", "grep in workspace")
+
+# write_file inside vs outside allowed dir
+check_q3({"tool": "write_file", "path": "/srv/reports/out.txt", "content": "x"}, "allow", "write inside /srv/reports")
+check_q3({"tool": "write_file", "path": "/srv/reports/sub/out.txt", "content": "x"}, "allow", "write inside /srv/reports subdir")
+check_q3({"tool": "write_file", "path": "/etc/passwd", "content": "x"}, "block", "write outside allowed dir")
+check_q3({"tool": "write_file", "path": "/srv/reports/../../etc/passwd", "content": "x"}, "block", "write traversal escape")
+check_q3({"tool": "write_file", "path": "/srv/reports-evil/out.txt", "content": "x"}, "block", "write to lookalike sibling dir")
+check_q3({"tool": "write_file", "path": "notes.txt", "content": "x"}, "block", "relative write lands in workspace, not allowed")
+
+# http_request allowed vs disallowed hosts
+check_q3({"tool": "http_request", "method": "GET", "url": "https://api.github.com/repos/x/y"}, "allow", "allowed host api.github.com")
+check_q3({"tool": "http_request", "method": "GET", "url": "https://raw.githubusercontent.com/x/y/main/f.txt"}, "allow", "allowed host raw.githubusercontent.com")
+check_q3({"tool": "http_request", "method": "GET", "url": "https://evil.com/"}, "block", "disallowed host")
+check_q3({"tool": "http_request", "method": "GET", "url": "https://api.github.com.evil.com/"}, "block", "domain-confusion suffix trick")
+check_q3({"tool": "http_request", "method": "GET", "url": "https://evil.com/?x=api.github.com"}, "block", "query-string confusion")
+check_q3({"tool": "http_request", "method": "GET", "url": "https://api.github.com@evil.com/"}, "block", "userinfo confusion")
+check_q3({"tool": "http_request", "method": "GET", "url": "https://sub.api.github.com/"}, "block", "subdomain not exact host")
+
 print()
 if failures:
     print(f"{len(failures)} FAILURE(S):", failures)
