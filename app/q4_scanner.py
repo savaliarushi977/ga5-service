@@ -42,7 +42,11 @@ task. This can appear either as an explicit frontmatter "permissions" field OR a
 plain-language statement of what access it uses - judge by the actual scope requested
 either way. A permission/access statement that plainly matches the stated task's scope
 is NOT excessive (e.g. "network: api.github.com" for a skill that calls GitHub is
-normal).
+normal). A step that MISUSES access the skill already legitimately has for a hidden
+purpose is prompt_injection, not excessive_permissions - do not also flag
+excessive_permissions just because a prompt_injection step happens to touch something
+broad; judge excessive_permissions only by the skill's own stated resource footprint,
+never by what a separately-flagged malicious step does with it.
 
 unclear_provenance: the skill has no author, no version, and no changelog - and/or a
 step silently rewrites its own version metadata without surfacing that change to the

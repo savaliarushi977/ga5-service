@@ -60,6 +60,9 @@ def extract_safe_host(url: str) -> str | None:
     hostname = parsed.host
     if not hostname:
         return None
+    hostname = hostname.rstrip(".")  # a trailing dot denotes an FQDN, same host
+    if not hostname:
+        return None
     default_port = 443 if parsed.scheme.lower() == "https" else 80
     if parsed.port is not None and parsed.port != default_port:
         return None
