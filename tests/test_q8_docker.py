@@ -49,6 +49,15 @@ check({"tool": "fetch_url", "arguments": {"url": "https://example.com@evil.com/"
 check({"tool": "fetch_url", "arguments": {"url": "https://example.com.evil.com/"}}, "block", "domain-suffix confusion")
 check({"tool": "fetch_url", "arguments": {"url": "https://sub.example.com/"}}, "block", "subdomain not exact host")
 
+# scheme / userinfo / port confusion (newly hardened)
+check({"tool": "fetch_url", "arguments": {"url": "file://example.com/etc/passwd"}}, "block", "non-http(s) scheme (file://) with allowed-looking host")
+check({"tool": "fetch_url", "arguments": {"url": "gopher://example.com/"}}, "block", "non-http(s) scheme (gopher://)")
+check({"tool": "fetch_url", "arguments": {"url": "https://user:pass@example.com/"}}, "block", "embedded credentials even with correct host")
+check({"tool": "fetch_url", "arguments": {"url": "https://example.com:8443/"}}, "block", "non-default port on allowed host")
+check({"tool": "fetch_url", "arguments": {"url": "https://example.com:443/"}}, "allow", "explicit default port on allowed host stays allowed")
+check({"tool": "fetch_url", "arguments": {"url": "evil.com"}}, "block", "missing scheme entirely")
+check({"tool": "fetch_url", "arguments": {"url": "https:evil.com"}}, "block", "malformed scheme separator")
+
 print()
 if failures:
     print(f"{len(failures)} FAILURE(S):", failures)

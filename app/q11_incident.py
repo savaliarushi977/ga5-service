@@ -251,6 +251,15 @@ def digest_arguments(arguments: dict) -> str:
 
 @router.post("/v2/incidents")
 def create_incident(payload: dict):
+    try:
+        return _create_incident_impl(payload)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"internal error: {type(e).__name__}: {e}")
+
+
+def _create_incident_impl(payload: dict):
     if payload.get("profile") != "ga5-incident-agent/v2":
         raise HTTPException(status_code=422, detail="unsupported profile")
     run_id = payload.get("runId")
@@ -336,6 +345,15 @@ def create_incident(payload: dict):
 
 @router.post("/v2/incidents/{run_id}/receipts")
 def post_receipts(run_id: str, payload: dict):
+    try:
+        return _post_receipts_impl(run_id, payload)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"internal error: {type(e).__name__}: {e}")
+
+
+def _post_receipts_impl(run_id: str, payload: dict):
     run_ref = db().collection("q11_runs").document(run_id)
     snap = run_ref.get()
     if not snap.exists:

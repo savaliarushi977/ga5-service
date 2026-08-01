@@ -14,6 +14,14 @@ app.include_router(q10_a2a.router)
 app.include_router(q11_incident.router)
 
 
+@app.middleware("http")
+async def a2a_content_type_middleware(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/a2a/"):
+        response.headers["Content-Type"] = "application/a2a+json"
+    return response
+
+
 @app.get("/")
 def health():
     return {"ok": True}
