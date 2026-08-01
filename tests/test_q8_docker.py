@@ -62,6 +62,13 @@ check({"tool": "fetch_url", "arguments": {"url": "https:evil.com"}}, "block", "m
 # must never crash to a raw 500 (which reads as "not blocked"), must fail closed
 check({"tool": "fetch_url", "arguments": {"url": "https://exa\tmple.com/"}}, "block", "embedded tab char in hostname (parser discrepancy)")
 check({"tool": "fetch_url", "arguments": {"url": "https://exa\nmple.com/"}}, "block", "embedded newline in hostname (parser discrepancy)")
+
+# proactive redirect-to-private detection via the URL's OWN query string,
+# independent of whether the allowed host would ever really redirect
+check({"tool": "fetch_url", "arguments": {"url": "https://example.com/?redirect=http://169.254.169.254/latest/meta-data/"}}, "block", "redirect param embeds cloud metadata IP")
+check({"tool": "fetch_url", "arguments": {"url": "https://example.com/?next=http://127.0.0.1/admin"}}, "block", "next param embeds loopback IP")
+check({"tool": "fetch_url", "arguments": {"url": "https://example.com/?dest=http://localhost/"}}, "block", "dest param embeds localhost literal")
+check({"tool": "fetch_url", "arguments": {"url": "https://example.com/?to=https://www.iana.org/"}}, "allow", "redirect-style param pointing at another PUBLIC allowed host stays allowed")
 check({"tool": "read_file", "arguments": {"path": "/srv/agent-redteam/sandbox-dbba8b5d6b/notes/\x00report.txt"}}, "block", "NUL byte in read path must not crash")
 
 print()
