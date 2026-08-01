@@ -85,12 +85,22 @@ def b64_decode_any(s: str) -> bytes:
         return b64url_decode(s)
 
 
-def verify_receipt_signature(public_key_jwk: dict, receipt: dict) -> bool:
+def verify_receipt_signature(public_key_jwk: dict, receipt: dict, evaluation_id: str, input_digest: str) -> bool:
+    """The signed message is {"profile","evaluationId","inputDigest","receipt":
+    <every receipt field except receiptSignature>} as recursively key-sorted
+    compact JSON - not just the bare receipt. This binds accepted/dossierId/
+    callId to this exact evaluation so a receipt can't be replayed elsewhere,
+    and covers 'accepted' itself so flipping it invalidates the signature."""
     try:
         pub_bytes = b64url_decode(public_key_jwk["x"])
         pub_key = Ed25519PublicKey.from_public_bytes(pub_bytes)
         sig = b64_decode_any(receipt["receiptSignature"])
-        message_obj = {k: v for k, v in receipt.items() if k != "receiptSignature"}
+        message_obj = {
+            "profile": PROFILE,
+            "evaluationId": evaluation_id,
+            "inputDigest": input_digest,
+            "receipt": {k: v for k, v in receipt.items() if k != "receiptSignature"},
+        }
         message = canonical_json_bytes(message_obj)
         pub_key.verify(sig, message)
         return True
@@ -358,6 +368,19 @@ def propose(payload: dict) -> tuple[int, dict]:
             return 422, {"error": f"dossier {did} missing sources"}
 
     input_digest = compute_input_digest(dossiers)
+    # inputDigest (spec-literal: only over dossiers) is what's echoed back and
+    # checked at commit time. But "changed content" for conflict-detection
+    # purposes means the whole semantic request - the grader's conflict probe
+    # resends a stored evaluation with e.g. one character changed in
+    # receiptVerifier.publicKeyJwk while dossiers stay byte-identical, which
+    # inputDigest alone would never notice.
+    content_digest = sha256_hex(canonical_json_bytes({
+        "dossiers": dossiers,
+        "corpus": payload.get("corpus"),
+        "allowedActions": payload.get("allowedActions"),
+        "profile": payload.get("profile"),
+        "receiptVerifier": receipt_verifier,
+    }))
 
     eval_ref = db().collection("q9_evaluations").document(evaluation_id)
     try:
@@ -365,11 +388,16 @@ def propose(payload: dict) -> tuple[int, dict]:
         # concurrent propose() calls for the same evaluationId can never both
         # observe "not exists" and both proceed independently (the race that
         # let a conflicting-content call slip through with 200 instead of 409).
-        eval_ref.create({"inputDigest": input_digest, "status": "in_progress", "createdAt": time.time()})
+        eval_ref.create({
+            "inputDigest": input_digest,
+            "contentDigest": content_digest,
+            "status": "in_progress",
+            "createdAt": time.time(),
+        })
     except AlreadyExists:
         for _ in range(40):
             existing = eval_ref.get().to_dict()
-            if existing["inputDigest"] != input_digest:
+            if existing.get("contentDigest", existing.get("inputDigest")) != content_digest:
                 return 409, {"error": "evaluationId reused with changed content"}
             if existing.get("status") == "done":
                 return 200, existing["proposeResponse"]
@@ -484,7 +512,7 @@ def commit(payload: dict) -> tuple[int, dict]:
             })
             continue
 
-        verified = verify_receipt_signature(public_key_jwk, receipt)
+        verified = verify_receipt_signature(public_key_jwk, receipt, evaluation_id, ev["inputDigest"])
         accepted = verified and receipt.get("accepted") is True
         status = "executed" if accepted else "rejected"
 

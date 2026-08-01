@@ -78,8 +78,14 @@ DOSSIERS = [
 ]
 
 
-def sign_receipt(fields):
-    sig = priv.sign(canon(fields))
+def sign_receipt(fields, evaluation_id, input_digest):
+    message = canon({
+        "profile": "ga5-mailroom-action-gate/v2",
+        "evaluationId": evaluation_id,
+        "inputDigest": input_digest,
+        "receipt": fields,
+    })
+    sig = priv.sign(message)
     return dict(fields, receiptSignature=base64.b64encode(sig).decode())
 
 
@@ -137,7 +143,7 @@ for p in proposals:
         "proposalDigest": proposal_digest(p),
         "receiptId": f"receipt-{p['dossierId']}",
     }
-    receipts.append(sign_receipt(fields))
+    receipts.append(sign_receipt(fields, eval_id_1, resp1["inputDigest"]))
 
 commit_req = {
     "profile": "ga5-mailroom-action-gate/v2",

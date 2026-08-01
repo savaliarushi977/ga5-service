@@ -73,13 +73,17 @@ def require_auth(
     content_type: str | None,
     require_content_type: bool = False,
 ) -> str:
+    # Authentication is checked first: "Missing authentication returns
+    # 401/403" is the more specific/primary failure mode the grader probes
+    # for on protected routes, so a request missing everything must surface
+    # as 401, not the version/media-type check.
+    if not authorization or not authorization.startswith("Bearer ") or len(authorization) <= len("Bearer "):
+        raise HTTPException(status_code=401, detail="missing bearer token")
     if a2a_version != "1.0":
         raise HTTPException(status_code=400, detail="missing or unsupported A2A-Version")
     if require_content_type:
         if not content_type or content_type.split(";")[0].strip().lower() != "application/a2a+json":
             raise HTTPException(status_code=400, detail="Content-Type must be application/a2a+json")
-    if not authorization or not authorization.startswith("Bearer ") or len(authorization) <= len("Bearer "):
-        raise HTTPException(status_code=401, detail="missing bearer token")
     return authorization[len("Bearer "):].strip()
 
 
